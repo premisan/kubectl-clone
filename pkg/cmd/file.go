@@ -11,6 +11,7 @@ import (
 	"github.com/premisan/kubectl-clone/pkg/rsync"
 	"github.com/premisan/kubectl-clone/pkg/util"
 	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 )
 
@@ -138,23 +139,31 @@ func (o *FileOptions) Run(ctx context.Context, srcArg, destArg string) error {
 
 // preparePodEndpoint prepares either a direct container or an ephemeral debug container for rsync.
 func (o *FileOptions) preparePodEndpoint(ctx context.Context, bundle *k8s.ClientBundle, loc location) (containerName, resolvedPath string, err error) {
+	targetContainer := o.Container
+	if targetContainer == "" {
+		pod, getErr := bundle.Clientset.CoreV1().Pods(bundle.Namespace).Get(ctx, loc.PodName, metav1.GetOptions{})
+		if getErr == nil && len(pod.Spec.Containers) > 0 {
+			targetContainer = pod.Spec.Containers[0].Name
+		}
+	}
+
 	if !o.UseDebug {
 		// Standard container mode
-		if err := rsync.EnsureRsyncInstalled(ctx, bundle, loc.PodName, o.Container); err != nil {
+		if err := rsync.EnsureRsyncInstalled(ctx, bundle, loc.PodName, targetContainer); err != nil {
 			return "", "", err
 		}
-		return o.Container, loc.Path, nil
+		return targetContainer, loc.Path, nil
 	}
 
 	// Debug container mode (Distroless / Scratch friendly)
-	util.PrintBanner(o.Out, fmt.Sprintf("Preparing ephemeral debug container on pod %s (targeted at %s)...", loc.PodName, o.Container))
-	debugContainer, err := k8s.EnsureDebugContainer(ctx, bundle, loc.PodName, o.Container, o.DebugImage)
+	util.PrintBanner(o.Out, fmt.Sprintf("Preparing ephemeral debug container on pod %s (targeted at %s)...", loc.PodName, targetContainer))
+	debugContainer, err := k8s.EnsureDebugContainer(ctx, bundle, loc.PodName, targetContainer, o.DebugImage)
 	if err != nil {
 		util.PrintBanner(o.ErrOut, fmt.Sprintf("Warning: Ephemeral container attachment failed (%v). Falling back to direct container mode.", err))
-		if rsyncErr := rsync.EnsureRsyncInstalled(ctx, bundle, loc.PodName, o.Container); rsyncErr != nil {
+		if rsyncErr := rsync.EnsureRsyncInstalled(ctx, bundle, loc.PodName, targetContainer); rsyncErr != nil {
 			return "", "", rsyncErr
 		}
-		return o.Container, loc.Path, nil
+		return targetContainer, loc.Path, nil
 	}
 
 	// Ensure rsync is installed in the debug container
@@ -252,18 +261,22 @@ func (o *FileOptions) runPodAndLocal(ctx context.Context, src, dest location, op
 		args = append(args, "--dry-run")
 	}
 
-	rsh := "kubectl"
+	kExecCmd := "kubectl"
 	if targetContext != "" {
-		rsh += fmt.Sprintf(" --context=%s", targetContext)
+		kExecCmd += fmt.Sprintf(" --context=%s", targetContext)
 	}
 	if targetNamespace != "" {
-		rsh += fmt.Sprintf(" -n %s", targetNamespace)
+		kExecCmd += fmt.Sprintf(" -n %s", targetNamespace)
 	}
 	if activeContainer != "" {
-		rsh += fmt.Sprintf(" -c %s", activeContainer)
+		kExecCmd += fmt.Sprintf(" -c %s", activeContainer)
 	}
-	rsh += " exec -i"
+	kExecCmd += " exec -i"
 
+	// rsync executes: <rsh> <host> rsync --server ...
+	// Without '--', kubectl exec interprets rsync options (like -g in -g -l -o -p...) as kubectl's own shorthand flags.
+	// Wrapping in a shell script injects '--' right after the pod argument ($1).
+	rsh := fmt.Sprintf("sh -c 'pod=\"$1\"; shift; exec %s \"$pod\" -- \"$@\"' --", kExecCmd)
 	args = append(args, "-e", rsh)
 
 	var srcPath, destPath string

@@ -211,20 +211,45 @@ kubectl clone p source-pvc dest-pvc --image bitnami/rsync:latest
 
 ### 4. Container File & Directory Inspection (`ls` / `tree`)
 
-Explore and browse files, permissions, and directory hierarchies inside pods before cloning. Actively utilizes Ephemeral Debug Containers to inspect **Distroless/Scratch pods without native `ls`, `sh`, or `tree` utilities**.
+Explore and browse files, permissions, and directory hierarchies inside pods before cloning. Actively utilizes Ephemeral Debug Containers to inspect **Distroless/Scratch pods without native `ls`, `sh`, or `tree` utilities**, supporting standard Linux command flags.
 
+#### `ls` / `l` Examples
 ```bash
-# 1. List directory contents inside a pod
-kubectl clone ls my-pod:/var/log/
+# 1. Standard long listing of pod root directory
+kubectl clone ls my-pod
 
-# 2. Inspect Distroless coredns pod via shorthand 'l'
-kubectl clone l coredns-xxxx:/etc/coredns -n kube-system
+# 2. Inspect Distroless coredns pod via shorthand 'l' (shows hidden files)
+kubectl clone l coredns-xxxx:/etc/coredns -n kube-system -a
 
-# 3. View directory hierarchy in a tree view with depth limit
+# 3. Sort files by modification time, newest first (-t)
+kubectl clone ls my-pod:/var/log -t
+
+# 4. Sort by file size, largest first (-S) in reverse order (-r)
+kubectl clone ls my-pod:/data -S -r
+
+# 5. Recursive directory listing (-R)
+kubectl clone ls my-pod:/etc -R
+
+# 6. Single-column output (-1) without detailed permissions
+kubectl clone ls my-pod:/app -l=false -1
+```
+
+#### `tree` / `t` Examples
+```bash
+# 1. View directory hierarchy in a tree view with depth limit (-L)
 kubectl clone tree coredns-xxxx:/etc -n kube-system -L 2
 
-# 4. View directories only via shorthand 't'
+# 2. View directories only via shorthand 't' (-d)
 kubectl clone t my-pod:/app -d
+
+# 3. Show file permissions and human-readable sizes (-p, -h)
+kubectl clone tree my-pod:/var/log -p -h
+
+# 4. Display all files including hidden ones, excluding specific patterns (-I)
+kubectl clone tree my-pod:/app -a -I "*.log|node_modules|*.tmp"
+
+# 5. Print full absolute paths for each entry (--full-path)
+kubectl clone tree my-pod:/etc/kubernetes/pki --full-path
 ```
 
 ---
@@ -253,6 +278,8 @@ kubectl clone t my-pod:/app -d
       --dest-namespace string   Destination namespace
       --delete                  Delete extraneous files from destination
   -z, --compress                Compress data stream during transfer (default true)
+      --use-debug               Use ephemeral debug container to support Distroless pods (default true)
+      --debug-image string      Container image for ephemeral debug containers (default "busybox:latest")
       --dry-run                 Perform a trial run with no changes made
 ```
 
@@ -269,6 +296,41 @@ kubectl clone t my-pod:/app -d
   -z, --compress                Compress data stream during transfer (default true)
       --image string            Container image for migration pods (default "alpine:latest")
       --dry-run                 Perform a trial run with no changes made
+```
+
+### `kubectl clone ls` / `l`
+```text
+  -a, --all                     Do not ignore entries starting with . (includes . and ..)
+  -A, --almost-all              Do not list implied . and ..
+  -l, --long                    Use a long listing format (default true)
+      --human-readable          Print human readable sizes like 1K, 234M, 2G (default true)
+  -t, --sort-time               Sort by modification time, newest first
+  -S, --sort-size               Sort by file size, largest first
+  -r, --reverse                 Reverse order while sorting
+  -R, --recursive               List subdirectories recursively
+  -1, --one                     List one file per line
+  -c, --container string        Target container name inside pod
+  -n, --namespace string        Namespace scope for this request
+      --context string          The kubeconfig context to use
+      --use-debug               Use ephemeral debug container for Distroless pods (default true)
+      --debug-image string      Container image for ephemeral debug container (default "busybox:latest")
+```
+
+### `kubectl clone tree` / `t`
+```text
+  -L, --level int               Max display depth of the directory tree
+  -d, --dirs-only               List directories only
+  -a, --all                     All files are listed (including hidden files)
+  -p, --permissions             Print the file type and permissions flags
+  -s, --size                    Print the size in bytes of each file
+  -h, --human-readable          Print the size in human readable format (e.g. 1K, 234M)
+  -I, --ignore string           Do not list files that match given pattern (e.g. "*.log|*.tmp")
+      --full-path               Print the full path prefix for each file
+  -c, --container string        Target container name inside pod
+  -n, --namespace string        Namespace scope for this request
+      --context string          The kubeconfig context to use
+      --use-debug               Use ephemeral debug container for Distroless pods (default true)
+      --debug-image string      Container image for ephemeral debug container (default "busybox:latest")
 ```
 
 ---

@@ -214,20 +214,45 @@ kubectl clone p source-pvc dest-pvc --image bitnami/rsync:latest
 
 ### 4. 컨테이너 내부 파일 및 트리 구조 탐색 (`ls` / `tree`)
 
-파일을 복제하기 전 파드 내부의 파일 및 디렉토리 구조를 손쉽게 확인할 수 있습니다. Ephemeral Debug Container를 자동으로 활용하여 **`ls`, `sh`, `tree` 도구가 전혀 없는 Distroless/Scratch 파드도 완벽하게 탐색**합니다.
+파일을 복제하기 전 파드 내부의 파일 및 디렉토리 구조를 손쉽게 확인할 수 있습니다. Ephemeral Debug Container를 자동으로 활용하여 **`ls`, `sh`, `tree` 도구가 전혀 없는 Distroless/Scratch 파드도 완벽하게 탐색**하며, 리눅스 표준 명령 옵션들을 폭넓게 지원합니다.
 
+#### `ls` / `l` 사용 예시
 ```bash
-# 1. 파드 내부 디렉토리 파일 목록 조회 (권한, 크기 상세 표시)
-kubectl clone ls my-pod:/var/log/
+# 1. 파드 루트 디렉토리 파일 목록 상세 조회
+kubectl clone ls my-pod
 
-# 2. coredns(Distroless) 파드의 /etc/coredns 내부 파일 확인 (단축어 l 사용)
-kubectl clone l coredns-xxxx:/etc/coredns -n kube-system
+# 2. coredns(Distroless) 파드의 /etc/coredns 내부 숨김 파일 포함 목록 조회 (-a, 단축어 l)
+kubectl clone l coredns-xxxx:/etc/coredns -n kube-system -a
 
-# 3. 디렉토리 계층 구조를 트리(Tree) 형태로 시각화 (탐색 깊이 제한: -L 2)
+# 3. 최근 수정된 시간 순으로 정렬 (-t)
+kubectl clone ls my-pod:/var/log -t
+
+# 4. 파일 크기 순으로 내림차순(-S) 및 역순 정렬 (-r)
+kubectl clone ls my-pod:/data -S -r
+
+# 5. 하위 디렉토리 재귀적 조회 (-R)
+kubectl clone ls my-pod:/etc -R
+
+# 6. 한 줄에 파일명 하나씩 출력 (-1)
+kubectl clone ls my-pod:/app -l=false -1
+```
+
+#### `tree` / `t` 사용 예시
+```bash
+# 1. 디렉토리 계층 구조를 트리 형태로 시각화 (탐색 깊이 제한: -L 2)
 kubectl clone tree coredns-xxxx:/etc -n kube-system -L 2
 
-# 4. 디렉토리만 트리로 시각화 (단축어 t 사용)
+# 2. 디렉토리만 트리로 시각화 (-d, 단축어 t)
 kubectl clone t my-pod:/app -d
+
+# 3. 파일 퍼미션 및 사람이 읽기 쉬운 단위의 파일 크기 함께 표시 (-p, -h)
+kubectl clone tree my-pod:/var/log -p -h
+
+# 4. 숨김 파일 포함 및 특정 패턴 제외 필터링 (-a, -I)
+kubectl clone tree my-pod:/app -a -I "*.log|node_modules|*.tmp"
+
+# 5. 각 항목의 전체 절대 경로 출력 (--full-path)
+kubectl clone tree my-pod:/etc/kubernetes/pki --full-path
 ```
 
 ---
@@ -256,6 +281,8 @@ kubectl clone t my-pod:/app -d
       --dest-namespace string   대상 네임스페이스
       --delete                  대상 경로에서 원본에 없는 파일 삭제 (미러링)
   -z, --compress                전송 중 데이터 스트림 압축 (기본값: true)
+      --use-debug               Distroless 파드를 위한 Ephemeral 디버그 컨테이너 사용 (기본값: true)
+      --debug-image string      디버그 컨테이너에 사용할 이미지 (기본값: "busybox:latest")
       --dry-run                 실제 변경 없이 전송될 파일 목록만 테스트
 ```
 
@@ -272,6 +299,41 @@ kubectl clone t my-pod:/app -d
   -z, --compress                전송 데이터 압축 (기본값: true)
       --image string            임시 마이그레이션 파드에 사용할 컨테이너 이미지 (기본값: "alpine:latest")
       --dry-run                 실제 전송 없이 테스트 수행
+```
+
+### `kubectl clone ls` / `l`
+```text
+  -a, --all                     . 으로 시작하는 숨김 파일 포함 (. 및 .. 포함)
+  -A, --almost-all              . 및 .. 을 제외한 숨김 파일 포함
+  -l, --long                    상세 정보(퍼미션, 소유자, 크기, 수정시간) 목록 표시 (기본값: true)
+      --human-readable          1K, 234M, 2G 등 사람이 읽기 쉬운 단위로 파일 크기 표시 (기본값: true)
+  -t, --sort-time               수정 시간 기준 최신순 정렬
+  -S, --sort-size               파일 크기 기준 내림차순 정렬
+  -r, --reverse                 정렬 순서 반전
+  -R, --recursive               하위 디렉토리 재귀적 조회
+  -1, --one                     한 줄에 하나의 파일만 출력
+  -c, --container string        파드 내 대상 컨테이너 이름
+  -n, --namespace string        네임스페이스
+      --context string          사용할 kubeconfig 컨텍스트
+      --use-debug               Distroless 파드를 위한 Ephemeral 디버그 컨테이너 사용 (기본값: true)
+      --debug-image string      디버그 컨테이너에 사용할 이미지 (기본값: "busybox:latest")
+```
+
+### `kubectl clone tree` / `t`
+```text
+  -L, --level int               디렉토리 트리 최대 탐색 깊이 제한
+  -d, --dirs-only               디렉토리만 표시
+  -a, --all                     숨김 파일을 포함한 모든 파일/디렉토리 표시
+  -p, --permissions             파일 유형 및 권한(퍼미션) 플래그 표시 (예: [drwxr-xr-x])
+  -s, --size                    파일 바이트 크기 표시
+  -h, --human-readable          읽기 쉬운 형식으로 파일 크기 표시 (예: [ 4.0K])
+  -I, --ignore string           지정된 와일드카드 패턴과 일치하는 항목 제외 (예: "*.log|*.tmp")
+      --full-path               각 파일 및 디렉토리의 전체 절대 경로 출력
+  -c, --container string        파드 내 대상 컨테이너 이름
+  -n, --namespace string        네임스페이스
+      --context string          사용할 kubeconfig 컨텍스트
+      --use-debug               Distroless 파드를 위한 Ephemeral 디버그 컨테이너 사용 (기본값: true)
+      --debug-image string      디버그 컨테이너에 사용할 이미지 (기본값: "busybox:latest")
 ```
 
 ---
