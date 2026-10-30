@@ -15,3 +15,12 @@ coverage.txt
 
 # OS
 .DS_Store
+
+# Credentials & Sensitive Files (Security Prevention)
+*.key
+*.pem
+*.crt
+*.kubeconfig
+kubeconfig*
+.env
+.env.*
