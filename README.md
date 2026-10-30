@@ -11,7 +11,9 @@
 kubectl clone
 ├── resource (r)  # Clone k8s objects (Secrets, ConfigMaps, Deployments, CRDs) with auto-sanitization
 ├── file     (f)  # Incremental and recursive file/directory sync between Pod and Local or Pod and Pod
-└── pvc      (p)  # Cross-Cluster & Cross-Namespace PVC data migration without public IPs or LoadBalancers
+├── pvc      (p)  # Cross-Cluster & Cross-Namespace PVC data migration without public IPs or LoadBalancers
+├── ls       (l)  # List files & permissions inside containers (supports Distroless pods via debug container)
+└── tree     (t)  # Display hierarchical directory tree inside containers (supports Distroless pods)
 ```
 
 ---
@@ -204,6 +206,26 @@ kubectl clone p source-pvc dest-pvc --image bitnami/rsync:latest
 - `auto` (default): Automatically uses `direct` if source & destination are in the same cluster/namespace; otherwise uses `stdio-bridge`.
 - `direct`: Mounts both PVCs into a single worker pod for local disk-to-disk speed.
 - `stdio-bridge`: Streams data bi-directionally between two clusters using the local CLI as an in-memory cross-pipe.
+
+---
+
+### 4. Container File & Directory Inspection (`ls` / `tree`)
+
+Explore and browse files, permissions, and directory hierarchies inside pods before cloning. Actively utilizes Ephemeral Debug Containers to inspect **Distroless/Scratch pods without native `ls`, `sh`, or `tree` utilities**.
+
+```bash
+# 1. List directory contents inside a pod
+kubectl clone ls my-pod:/var/log/
+
+# 2. Inspect Distroless coredns pod via shorthand 'l'
+kubectl clone l coredns-xxxx:/etc/coredns -n kube-system
+
+# 3. View directory hierarchy in a tree view with depth limit
+kubectl clone tree coredns-xxxx:/etc -n kube-system -L 2
+
+# 4. View directories only via shorthand 't'
+kubectl clone t my-pod:/app -d
+```
 
 ---
 

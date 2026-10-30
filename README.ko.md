@@ -11,7 +11,9 @@
 kubectl clone
 ├── resource (r)  # k8s 리소스 오브젝트(Secret, ConfigMap, Deployment, CRD 등) 자동 정제 복제
 ├── file     (f)  # 파드 <-> 로컬, 파드 <-> 파드 증분 및 재귀 파일 동기화 (alias: cp, sync)
-└── pvc      (p)  # 공인 IP/LB 없는 크로스 클러스터 PVC 볼륨 마이그레이션 (alias: volume, pv)
+├── pvc      (p)  # 공인 IP/LB 없는 크로스 클러스터 PVC 볼륨 마이그레이션 (alias: volume, pv)
+├── ls       (l)  # 파드 내부 파일/디렉토리 목록 조회 (디버그 컨테이너로 Distroless 지원)
+└── tree     (t)  # 파드 내부 디렉토리 계층 구조 트리 시각화 (Distroless 파드 지원)
 ```
 
 ---
@@ -207,6 +209,26 @@ kubectl clone p source-pvc dest-pvc --image bitnami/rsync:latest
 - `auto` (기본값): 소스와 대상이 동일 클러스터/동일 네임스페이스면 `direct`를 자동 선택하고, 다른 네임스페이스나 다른 클러스터면 `stdio-bridge`를 자동 선택합니다.
 - `direct`: 단일 임시 파드에 소스/타겟 PVC를 동시 마운트하여 로컬 디스크 간 초고속 복제를 수행합니다.
 - `stdio-bridge`: 로컬 머신을 중계 브릿지로 사용하여 두 클러스터 간에 Stdio 파이프라인 스트리밍을 수행합니다.
+
+---
+
+### 4. 컨테이너 내부 파일 및 트리 구조 탐색 (`ls` / `tree`)
+
+파일을 복제하기 전 파드 내부의 파일 및 디렉토리 구조를 손쉽게 확인할 수 있습니다. Ephemeral Debug Container를 자동으로 활용하여 **`ls`, `sh`, `tree` 도구가 전혀 없는 Distroless/Scratch 파드도 완벽하게 탐색**합니다.
+
+```bash
+# 1. 파드 내부 디렉토리 파일 목록 조회 (권한, 크기 상세 표시)
+kubectl clone ls my-pod:/var/log/
+
+# 2. coredns(Distroless) 파드의 /etc/coredns 내부 파일 확인 (단축어 l 사용)
+kubectl clone l coredns-xxxx:/etc/coredns -n kube-system
+
+# 3. 디렉토리 계층 구조를 트리(Tree) 형태로 시각화 (탐색 깊이 제한: -L 2)
+kubectl clone tree coredns-xxxx:/etc -n kube-system -L 2
+
+# 4. 디렉토리만 트리로 시각화 (단축어 t 사용)
+kubectl clone t my-pod:/app -d
+```
 
 ---
 
