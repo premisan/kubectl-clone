@@ -1,0 +1,17 @@
+# Binaries
+bin/
+/kubectl-clone
+
+# Test and coverage artifacts
+*.test
+*.out
+coverage.txt
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
