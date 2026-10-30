@@ -137,11 +137,15 @@ kubectl clone r deployment worker --to-namespace prod --dry-run=server
 
 ### 2. Pod File & Directory Syncing (`file` / `f`)
 
-Replaces standard `kubectl cp` with a full-fledged **Rsync wire-protocol engine** running directly over Kubernetes SPDY/WebSocket streams. Supports delta-transfers, permission preservation, and compression.
+Replaces standard `kubectl cp` with a full-fledged **Rsync wire-protocol engine** running directly over Kubernetes SPDY/WebSocket streams.
+- **Actively leverages Ephemeral Debug Containers (`--use-debug=true`, enabled by default)**: Seamlessly copies files and volumes from **Distroless and Scratch pods** (such as `coredns`, `etcd`, minimal Go/Rust images) with zero existing utilities.
+- Accesses target container filesystems and mounted volumes transparently via `/proc/<PID>/root`.
+- **Incremental diff transfer**: Only transfers changed file chunks (Delta-transfer).
+- Supports **Pod <-> Local** and **Cross-Cluster Pod <-> Pod** file synchronization.
 
 ```bash
-# 1. Pod -> Local: Recursively download logs from a pod
-kubectl clone file my-pod:/var/log/nginx/ ./local-logs/
+# 1. Pod -> Local: Seamlessly copy files/volumes from Distroless pods (e.g. Corefile from coredns)
+kubectl clone file coredns-xxxx:/etc/coredns/Corefile ./Corefile
 
 # 2. Local -> Pod: Sync local build assets into a pod (incremental diff only)
 kubectl clone f ./dist/ my-pod:/usr/share/nginx/html/

@@ -142,11 +142,14 @@ kubectl clone r deployment worker --to-namespace prod --dry-run=server
 
 ### 2. 파드 파일/디렉토리 고속 동기화 (`file` / `f`)
 
-기존 `kubectl cp`의 느린 속도와 권한 문제를 해결하기 위해, 파드의 SPDY Exec 스트림 위에서 **Linux Rsync 엔진**을 가동합니다. 파일 전체를 복사하지 않고 변경된 블록만 전송하는 증분(Delta) 전송과 압축을 지원합니다.
+기존 `kubectl cp`의 느린 속도와 권한 문제를 해결하기 위해, 파드의 SPDY Exec 스트림 위에서 **Linux Rsync 엔진**을 가동합니다.
+- **디버그 컨테이너 적극 활용 (`--use-debug=true`, 기본 활성화)**: `coredns`, `etcd`, Distroless, Scratch 등 `sh`, `ls`, `tar`가 전무한 파드라도 Ephemeral 디버그 컨테이너를 주입하여 프로세스 네임스페이스(`/proc/<PID>/root`)를 통해 **모든 파일과 마운트된 볼륨에 100% 정상 접근**합니다.
+- **증분(Delta) 전송**: 변경된 파일 블록만 diff 전송
+- **Pod <-> 로컬** 및 **크로스 클러스터 Pod <-> Pod** 양방향 파일 동기화 완벽 지원
 
 ```bash
-# 1. 파드 -> 로컬 복제: 파드의 로그 디렉토리를 로컬로 재귀 다운로드
-kubectl clone file my-pod:/var/log/nginx/ ./local-logs/
+# 1. 파드 -> 로컬 복제: Distroless 파드(예: coredns의 Corefile)에서도 문제없이 즉시 다운로드
+kubectl clone file coredns-xxxx:/etc/coredns/Corefile ./Corefile
 
 # 2. 로컬 -> 파드 복제: 빌드 결과물(dist 폴더)을 파드 내부로 증분 전송
 kubectl clone f ./dist/ my-pod:/usr/share/nginx/html/
