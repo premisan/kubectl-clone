@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/premisan/kubectl-clone/pkg/k8s"
 	"github.com/premisan/kubectl-clone/pkg/util"
@@ -101,15 +100,7 @@ func (o *LsOptions) Run(ctx context.Context, targetArg string) error {
 			util.PrintBanner(o.ErrOut, fmt.Sprintf("Warning: Debug container attachment failed (%v). Falling back to direct container mode.", err))
 		} else {
 			activeContainer = debugContainer
-			targetPID, err := k8s.FindTargetPID(ctx, bundle, podName, debugContainer)
-			if err != nil {
-				targetPID = 1
-			}
-			cleanPath := targetPath
-			if !strings.HasPrefix(cleanPath, "/") {
-				cleanPath = "/" + cleanPath
-			}
-			resolvedPath = fmt.Sprintf("/proc/%d/root%s", targetPID, cleanPath)
+			resolvedPath = k8s.ResolveDebugPath(ctx, bundle, podName, debugContainer, targetPath)
 		}
 	}
 

@@ -19,6 +19,7 @@ const (
 )
 
 // EnsureDebugContainer attaches or reuses an ephemeral debug container with process sharing targeted at targetContainer.
+// It also copies volume mounts from the target container and sets SYS_PTRACE permissions.
 func EnsureDebugContainer(ctx context.Context, bundle *ClientBundle, podName, targetContainer, debugImage string) (string, error) {
 	if debugImage == "" {
 		debugImage = DefaultDebugImage
@@ -29,19 +30,42 @@ func EnsureDebugContainer(ctx context.Context, bundle *ClientBundle, podName, ta
 		return "", fmt.Errorf("failed to get pod %s: %w", podName, err)
 	}
 
-	// 1. Check if an active debug container already exists
-	for _, status := range pod.Status.EphemeralContainerStatuses {
-		if strings.HasPrefix(status.Name, "clone-debug-") && status.State.Running != nil {
-			return status.Name, nil
-		}
-	}
-
 	// If targetContainer not specified, default to first regular container
 	if targetContainer == "" && len(pod.Spec.Containers) > 0 {
 		targetContainer = pod.Spec.Containers[0].Name
 	}
 
-	// 2. Add new Ephemeral Container targeted at the target container
+	// 1. Check if a properly configured debug container already exists (has volume mounts and is running)
+	for _, ec := range pod.Spec.EphemeralContainers {
+		if strings.HasPrefix(ec.Name, "clone-debug-") && len(ec.VolumeMounts) > 0 {
+			for _, status := range pod.Status.EphemeralContainerStatuses {
+				if status.Name == ec.Name && status.State.Running != nil {
+					return ec.Name, nil
+				}
+			}
+		}
+	}
+
+	// 2. Extract volume mounts from the target container to directly mount PVCs, ConfigMaps, and Secrets
+	var volumeMounts []corev1.VolumeMount
+	for _, c := range pod.Spec.Containers {
+		if c.Name == targetContainer {
+			volumeMounts = append(volumeMounts, c.VolumeMounts...)
+			break
+		}
+	}
+
+	// 3. Configure root and SYS_PTRACE capabilities to avoid kernel permission denied errors
+	rootUID := int64(0)
+	allowPrivilegeEscalation := true
+	secContext := &corev1.SecurityContext{
+		RunAsUser:                &rootUID,
+		AllowPrivilegeEscalation: &allowPrivilegeEscalation,
+		Capabilities: &corev1.Capabilities{
+			Add: []corev1.Capability{"SYS_PTRACE", "SYS_ADMIN", "DAC_OVERRIDE"},
+		},
+	}
+
 	debugName := fmt.Sprintf("clone-debug-%04d", rand.Intn(10000))
 	ephemeralSpec := corev1.EphemeralContainer{
 		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
@@ -51,6 +75,8 @@ func EnsureDebugContainer(ctx context.Context, bundle *ClientBundle, podName, ta
 			ImagePullPolicy: corev1.PullIfNotPresent,
 			Stdin:           true,
 			TTY:             false,
+			VolumeMounts:    volumeMounts,
+			SecurityContext: secContext,
 		},
 		TargetContainerName: targetContainer,
 	}
@@ -62,7 +88,7 @@ func EnsureDebugContainer(ctx context.Context, bundle *ClientBundle, podName, ta
 		return "", fmt.Errorf("failed to attach ephemeral debug container to pod %s: %w", podName, err)
 	}
 
-	// 3. Wait for the ephemeral container to enter Running phase
+	// 4. Wait for the ephemeral container to enter Running phase
 	err = WaitForEphemeralContainerRunning(ctx, bundle, podName, debugName, 45*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("debug container failed to start: %w", err)
@@ -93,6 +119,37 @@ func WaitForEphemeralContainerRunning(ctx context.Context, bundle *ClientBundle,
 	})
 }
 
+// ResolveDebugPath checks if the target path is directly mounted in the debug container (e.g. volumes),
+// or if it should be accessed via /proc/<PID>/root/<path>.
+func ResolveDebugPath(ctx context.Context, bundle *ClientBundle, podName, debugContainer, targetPath string) string {
+	cleanPath := targetPath
+	if !strings.HasPrefix(cleanPath, "/") {
+		cleanPath = "/" + cleanPath
+	}
+
+	// Check if cleanPath exists directly in the debug container (via copied VolumeMounts)
+	checkCmd := []string{"test", "-e", cleanPath}
+	if err := Exec(ctx, bundle, podName, debugContainer, checkCmd, nil, nil, nil); err == nil {
+		// Directly mounted volume found!
+		if strings.HasSuffix(targetPath, "/") && !strings.HasSuffix(cleanPath, "/") {
+			cleanPath += "/"
+		}
+		return cleanPath
+	}
+
+	// Otherwise access via target container process root
+	targetPID, err := FindTargetPID(ctx, bundle, podName, debugContainer)
+	if err != nil {
+		targetPID = 1
+	}
+
+	resolved := fmt.Sprintf("/proc/%d/root%s", targetPID, cleanPath)
+	if strings.HasSuffix(targetPath, "/") && !strings.HasSuffix(resolved, "/") {
+		resolved += "/"
+	}
+	return resolved
+}
+
 // FindTargetPID locates the process ID of the target container from within the debug container.
 func FindTargetPID(ctx context.Context, bundle *ClientBundle, podName, debugContainerName string) (int, error) {
 	var stdout, stderr bytes.Buffer
@@ -106,6 +163,6 @@ func FindTargetPID(ctx context.Context, bundle *ClientBundle, podName, debugCont
 		}
 	}
 
-	// Fallback to PID 1 (standard main process of a container)
+	// Fallback to PID 1
 	return 1, nil
 }

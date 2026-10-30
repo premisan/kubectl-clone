@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
 	"strings"
 
 	"github.com/premisan/kubectl-clone/pkg/k8s"
@@ -163,23 +162,8 @@ func (o *FileOptions) preparePodEndpoint(ctx context.Context, bundle *k8s.Client
 		return "", "", fmt.Errorf("failed to prepare rsync in debug container: %w", err)
 	}
 
-	// Find PID of target container process to access its filesystem via /proc/<PID>/root
-	targetPID, err := k8s.FindTargetPID(ctx, bundle, loc.PodName, debugContainer)
-	if err != nil {
-		targetPID = 1
-	}
-
-	// Map path to /proc/<PID>/root/<original_path>
-	cleanPath := loc.Path
-	if !strings.HasPrefix(cleanPath, "/") {
-		cleanPath = "/" + cleanPath
-	}
-	resolvedPath = path.Join(fmt.Sprintf("/proc/%d/root", targetPID), cleanPath)
-
-	// Preserve trailing slash if present
-	if strings.HasSuffix(loc.Path, "/") && !strings.HasSuffix(resolvedPath, "/") {
-		resolvedPath += "/"
-	}
+	// Resolve path: check if directly mounted volume exists, or fallback to /proc/<PID>/root
+	resolvedPath = k8s.ResolveDebugPath(ctx, bundle, loc.PodName, debugContainer, loc.Path)
 
 	return debugContainer, resolvedPath, nil
 }
