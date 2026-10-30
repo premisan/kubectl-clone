@@ -33,3 +33,46 @@ func TestBuildServerReceiverCommand(t *testing.T) {
 		t.Errorf("expected %v, got %v", expected, cmd)
 	}
 }
+
+func TestBuildServerWithOptions(t *testing.T) {
+	opts := Options{
+		Delete:    true,
+		Checksum:  true,
+		Compress:  true,
+		Partial:   true,
+		Bwlimit:   "5m",
+		Excludes:  []string{"*.log", "cache/"},
+		Includes:  []string{"*.txt"},
+		ExtraArgs: []string{"--stats"},
+	}
+
+	sender := BuildServerSenderCommand("/src", opts)
+	expectedSender := []string{
+		"rsync", "--server", "--sender",
+		"--exclude=*.log", "--exclude=cache/",
+		"--include=*.txt",
+		"--bwlimit=5m",
+		"--partial",
+		"--stats",
+		"-logDtprcze.iLsfxC", ".", "/src",
+	}
+
+	if !reflect.DeepEqual(sender, expectedSender) {
+		t.Errorf("expected sender %v, got %v", expectedSender, sender)
+	}
+
+	receiver := BuildServerReceiverCommand("/dest", opts)
+	expectedReceiver := []string{
+		"rsync", "--server", "--delete",
+		"--exclude=*.log", "--exclude=cache/",
+		"--include=*.txt",
+		"--bwlimit=5m",
+		"--partial",
+		"--stats",
+		"-logDtprcze.iLsfxC", ".", "/dest",
+	}
+
+	if !reflect.DeepEqual(receiver, expectedReceiver) {
+		t.Errorf("expected receiver %v, got %v", expectedReceiver, receiver)
+	}
+}

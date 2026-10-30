@@ -44,6 +44,14 @@ type FileOptions struct {
 	UseDebug      bool
 	DebugImage    string
 
+	// Advanced rsync options
+	Checksum  bool
+	Partial   bool
+	Bwlimit   string
+	Excludes  []string
+	Includes  []string
+	RsyncArgs string
+
 	genericclioptions.IOStreams
 }
 
@@ -79,6 +87,14 @@ func NewCmdCloneFile(streams genericclioptions.IOStreams) *cobra.Command {
 	cmd.Flags().BoolVar(&o.DryRun, "dry-run", false, "Perform a trial run with no changes made")
 	cmd.Flags().BoolVar(&o.UseDebug, "use-debug", true, "Actively use ephemeral debug containers to support Distroless/Scratch pods (defaults to true)")
 	cmd.Flags().StringVar(&o.DebugImage, "debug-image", k8s.DefaultDebugImage, "Container image for ephemeral debug containers")
+
+	// Advanced rsync flags
+	cmd.Flags().BoolVar(&o.Checksum, "checksum", false, "Skip based on checksum, not mod-time & size")
+	cmd.Flags().BoolVar(&o.Partial, "partial", false, "Keep partially transferred files")
+	cmd.Flags().StringVar(&o.Bwlimit, "bwlimit", "", "Bandwidth limit (e.g. '10m', '5000')")
+	cmd.Flags().StringArrayVar(&o.Excludes, "exclude", nil, "Exclude files matching PATTERN (can be specified multiple times)")
+	cmd.Flags().StringArrayVar(&o.Includes, "include", nil, "Don't exclude files matching PATTERN (can be specified multiple times)")
+	cmd.Flags().StringVar(&o.RsyncArgs, "rsync-args", "", "Pass arbitrary raw arguments directly to rsync")
 
 	_ = cmd.RegisterFlagCompletionFunc("src-context", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return completeContexts(toComplete), cobra.ShellCompDirectiveNoFileComp
@@ -120,12 +136,23 @@ func (o *FileOptions) Run(ctx context.Context, srcArg, destArg string) error {
 		return fmt.Errorf("at least one of source or destination must be a pod (e.g. 'pod-name:/path')")
 	}
 
+	var extraArgs []string
+	if o.RsyncArgs != "" {
+		extraArgs = strings.Fields(o.RsyncArgs)
+	}
+
 	rsyncOpts := rsync.Options{
-		Delete:   o.Delete,
-		Compress: o.Compress,
-		DryRun:   o.DryRun,
-		Archive:  true,
-		Verbose:  true,
+		Delete:    o.Delete,
+		Compress:  o.Compress,
+		DryRun:    o.DryRun,
+		Archive:   true,
+		Verbose:   true,
+		Checksum:  o.Checksum,
+		Partial:   o.Partial,
+		Bwlimit:   o.Bwlimit,
+		Excludes:  o.Excludes,
+		Includes:  o.Includes,
+		ExtraArgs: extraArgs,
 	}
 
 	// Case 1: Pod -> Pod
@@ -251,11 +278,29 @@ func (o *FileOptions) runPodAndLocal(ctx context.Context, src, dest location, op
 
 	// Build rsync command with -e "kubectl exec -i"
 	args := []string{"-av"}
+	if opts.Checksum {
+		args = append(args, "-c")
+	}
 	if opts.Compress {
 		args = append(args, "-z")
 	}
 	if opts.Delete {
 		args = append(args, "--delete")
+	}
+	if opts.Partial {
+		args = append(args, "--partial")
+	}
+	if opts.Bwlimit != "" {
+		args = append(args, "--bwlimit="+opts.Bwlimit)
+	}
+	for _, excl := range opts.Excludes {
+		args = append(args, "--exclude="+excl)
+	}
+	for _, incl := range opts.Includes {
+		args = append(args, "--include="+incl)
+	}
+	if len(opts.ExtraArgs) > 0 {
+		args = append(args, opts.ExtraArgs...)
 	}
 	if opts.DryRun {
 		args = append(args, "--dry-run")

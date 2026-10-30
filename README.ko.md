@@ -210,6 +210,14 @@ kubectl clone p source-pvc dest-pvc --image bitnami/rsync:latest
 - `direct`: 단일 임시 파드에 소스/타겟 PVC를 동시 마운트하여 로컬 디스크 간 초고속 복제를 수행합니다.
 - `stdio-bridge`: 로컬 머신을 중계 브릿지로 사용하여 두 클러스터 간에 Stdio 파이프라인 스트리밍을 수행합니다.
 
+#### 💡 실행 중인 파드의 RWO 볼륨 복제 & 최소 다운타임 2단계 마이그레이션
+
+`kubectl clone pvc`는 소스 RWO PVC를 마운트 중인 활성 파드를 자동 감지하고, **동일 노드(Node Co-location)**에 워커 파드를 스케줄링하여 볼륨을 `ReadOnly`로 안전하게 동시 마운트합니다. 이를 통해 Multi-Attach 충돌 없이 서비스 중단 없이 복제할 수 있습니다.
+
+**권장 2단계 마이그레이션 워크플로우:**
+1. **1차 사전 복제(라이브/무중단)**: 소스 파드가 활성 서비스 중인 상태에서 `kubectl clone pvc src-pvc dest-pvc`를 실행하여 대용량 데이터를 백그라운드에서 사전 복제합니다.
+2. **2차 최종 델타 복제(수 초 내 완료)**: 점검 시간에 소스 파드를 일시 정지(`kubectl scale --replicas=0`)하고, `kubectl clone pvc src-pvc dest-pvc`를 다시 실행하여 1차 이후 변경된 델타만 수 초 만에 증분 복제한 후 신규 파드를 가동합니다!
+
 ---
 
 ### 4. 컨테이너 내부 파일 및 트리 구조 탐색 (`ls` / `tree`)
@@ -281,6 +289,12 @@ kubectl clone tree my-pod:/etc/kubernetes/pki --full-path
       --dest-namespace string   대상 네임스페이스
       --delete                  대상 경로에서 원본에 없는 파일 삭제 (미러링)
   -z, --compress                전송 중 데이터 스트림 압축 (기본값: true)
+      --exclude strings         패턴과 일치하는 파일 제외 (여러 번 지정 가능)
+      --include strings         패턴과 일치하는 파일 포함 (여러 번 지정 가능)
+      --bwlimit string          전송 대역폭 제한 (예: '10m', '5000')
+      --checksum                수정 시간/크기 대신 체크섬 기반 비교
+      --partial                 중단된 대용량 파일 이어받기
+      --rsync-args string       rsync에 전달할 임의의 원시 인자 전달
       --use-debug               Distroless 파드를 위한 Ephemeral 디버그 컨테이너 사용 (기본값: true)
       --debug-image string      디버그 컨테이너에 사용할 이미지 (기본값: "busybox:latest")
       --dry-run                 실제 변경 없이 전송될 파일 목록만 테스트
@@ -297,6 +311,12 @@ kubectl clone tree my-pod:/etc/kubernetes/pki --full-path
       --strategy string         복제 전략 선택: 'auto', 'direct', 'stdio-bridge' (기본값: "auto")
       --delete                  대상 PVC에서 원본에 없는 파일 삭제 (완전 미러링)
   -z, --compress                전송 데이터 압축 (기본값: true)
+      --exclude strings         패턴과 일치하는 파일 제외 (여러 번 지정 가능)
+      --include strings         패턴과 일치하는 파일 포함 (여러 번 지정 가능)
+      --bwlimit string          전송 대역폭 제한 (예: '10m', '5000')
+      --checksum                수정 시간/크기 대신 체크섬 기반 비교
+      --partial                 중단된 대용량 파일 이어받기
+      --rsync-args string       rsync에 전달할 임의의 원시 인자 전달
       --image string            임시 마이그레이션 파드에 사용할 컨테이너 이미지 (기본값: "alpine:latest")
       --dry-run                 실제 전송 없이 테스트 수행
 ```

@@ -16,8 +16,37 @@ const (
 	MigrationLabelVal = "kubectl-clone"
 )
 
+// FindActivePodMountingPVC searches for any running pod currently mounting the given PVC,
+// returning the pod name and the node name where it is scheduled.
+func FindActivePodMountingPVC(ctx context.Context, bundle *ClientBundle, pvcName string) (podName, nodeName string, err error) {
+	podList, err := bundle.Clientset.CoreV1().Pods(bundle.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", "", err
+	}
+
+	for _, pod := range podList.Items {
+		// Ignore terminating pods or non-running pods
+		if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		// Ignore our own migration workers
+		if pod.Labels[MigrationLabelKey] == MigrationLabelVal {
+			continue
+		}
+
+		for _, vol := range pod.Spec.Volumes {
+			if vol.PersistentVolumeClaim != nil && vol.PersistentVolumeClaim.ClaimName == pvcName {
+				return pod.Name, pod.Spec.NodeName, nil
+			}
+		}
+	}
+
+	return "", "", nil
+}
+
 // SpawnMigrationPod creates an ephemeral migration pod mounting a single PVC.
-func SpawnMigrationPod(ctx context.Context, bundle *ClientBundle, podName, pvcName, mountPath, image string) (*corev1.Pod, error) {
+// If nodeName is specified, the pod is co-located on that node (e.g. for live RWO PVC replication).
+func SpawnMigrationPod(ctx context.Context, bundle *ClientBundle, podName, pvcName, mountPath, image, nodeName string, readOnly bool) (*corev1.Pod, error) {
 	if image == "" {
 		image = DefaultRsyncImage
 	}
@@ -32,7 +61,13 @@ func SpawnMigrationPod(ctx context.Context, bundle *ClientBundle, podName, pvcNa
 			},
 		},
 		Spec: corev1.PodSpec{
+			NodeName:      nodeName,
 			RestartPolicy: corev1.RestartPolicyNever,
+			Tolerations: []corev1.Toleration{
+				{
+					Operator: corev1.TolerationOpExists,
+				},
+			},
 			Containers: []corev1.Container{
 				{
 					Name:    "rsync-worker",
@@ -42,6 +77,7 @@ func SpawnMigrationPod(ctx context.Context, bundle *ClientBundle, podName, pvcNa
 						{
 							Name:      "pvc-volume",
 							MountPath: mountPath,
+							ReadOnly:  readOnly,
 						},
 					},
 				},
@@ -68,7 +104,8 @@ func SpawnMigrationPod(ctx context.Context, bundle *ClientBundle, podName, pvcNa
 }
 
 // SpawnDirectDualPVCPod creates a single pod mounting both source and destination PVCs for high-speed local copying.
-func SpawnDirectDualPVCPod(ctx context.Context, bundle *ClientBundle, podName, srcPVC, destPVC, image string) (*corev1.Pod, error) {
+// If nodeName is specified, the pod is scheduled on that specific node to co-locate with live source workloads.
+func SpawnDirectDualPVCPod(ctx context.Context, bundle *ClientBundle, podName, srcPVC, destPVC, image, nodeName string) (*corev1.Pod, error) {
 	if image == "" {
 		image = DefaultRsyncImage
 	}
@@ -83,7 +120,13 @@ func SpawnDirectDualPVCPod(ctx context.Context, bundle *ClientBundle, podName, s
 			},
 		},
 		Spec: corev1.PodSpec{
+			NodeName:      nodeName,
 			RestartPolicy: corev1.RestartPolicyNever,
+			Tolerations: []corev1.Toleration{
+				{
+					Operator: corev1.TolerationOpExists,
+				},
+			},
 			Containers: []corev1.Container{
 				{
 					Name:    "direct-worker",

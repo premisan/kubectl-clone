@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/premisan/kubectl-clone/pkg/k8s"
@@ -44,6 +45,14 @@ type PVCOptions struct {
 	DryRun        bool
 	Image         string
 
+	// Advanced rsync options
+	Checksum  bool
+	Partial   bool
+	Bwlimit   string
+	Excludes  []string
+	Includes  []string
+	RsyncArgs string
+
 	genericclioptions.IOStreams
 }
 
@@ -83,6 +92,14 @@ func NewCmdClonePVC(streams genericclioptions.IOStreams) *cobra.Command {
 	cmd.Flags().BoolVar(&o.DryRun, "dry-run", false, "Trial run with no changes made")
 	cmd.Flags().StringVar(&o.Image, "image", k8s.DefaultRsyncImage, "Container image for ephemeral migration pods")
 
+	// Advanced rsync flags
+	cmd.Flags().BoolVar(&o.Checksum, "checksum", false, "Skip based on checksum, not mod-time & size")
+	cmd.Flags().BoolVar(&o.Partial, "partial", false, "Keep partially transferred files")
+	cmd.Flags().StringVar(&o.Bwlimit, "bwlimit", "", "Bandwidth limit (e.g. '10m', '5000')")
+	cmd.Flags().StringArrayVar(&o.Excludes, "exclude", nil, "Exclude files matching PATTERN (can be specified multiple times)")
+	cmd.Flags().StringArrayVar(&o.Includes, "include", nil, "Don't exclude files matching PATTERN (can be specified multiple times)")
+	cmd.Flags().StringVar(&o.RsyncArgs, "rsync-args", "", "Pass arbitrary raw arguments directly to rsync")
+
 	_ = cmd.RegisterFlagCompletionFunc("strategy", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"auto", "direct", "stdio-bridge"}, cobra.ShellCompDirectiveNoFileComp
 	})
@@ -120,12 +137,23 @@ func (o *PVCOptions) Run(ctx context.Context, srcPVC, destPVC string) error {
 		}
 	}
 
+	var extraArgs []string
+	if o.RsyncArgs != "" {
+		extraArgs = strings.Fields(o.RsyncArgs)
+	}
+
 	rsyncOpts := rsync.Options{
-		Delete:   o.Delete,
-		Compress: o.Compress,
-		DryRun:   o.DryRun,
-		Archive:  true,
-		Verbose:  true,
+		Delete:    o.Delete,
+		Compress:  o.Compress,
+		DryRun:    o.DryRun,
+		Archive:   true,
+		Verbose:   true,
+		Checksum:  o.Checksum,
+		Partial:   o.Partial,
+		Bwlimit:   o.Bwlimit,
+		Excludes:  o.Excludes,
+		Includes:  o.Includes,
+		ExtraArgs: extraArgs,
 	}
 
 	switch strategy {
@@ -144,8 +172,14 @@ func (o *PVCOptions) runDirect(ctx context.Context, bundle *k8s.ClientBundle, sr
 	done := util.TrackDuration(o.Out, "Direct PVC synchronization")
 	defer done()
 
+	// Check if source PVC is actively mounted by a pod; if so, co-locate worker on that node to avoid RWO Multi-Attach collision
+	activePod, nodeName, err := k8s.FindActivePodMountingPVC(ctx, bundle, srcPVC)
+	if err == nil && nodeName != "" {
+		util.PrintBanner(o.Out, fmt.Sprintf("Source PVC '%s' is actively mounted by pod '%s' on node '%s'. Co-locating worker pod for live pre-sync...", srcPVC, activePod, nodeName))
+	}
+
 	podName := fmt.Sprintf("kubectl-clone-direct-%d", rand.Intn(100000))
-	_, err := k8s.SpawnDirectDualPVCPod(ctx, bundle, podName, srcPVC, destPVC, o.Image)
+	_, err = k8s.SpawnDirectDualPVCPod(ctx, bundle, podName, srcPVC, destPVC, o.Image, nodeName)
 	if err != nil {
 		return err
 	}
@@ -164,8 +198,26 @@ func (o *PVCOptions) runDirect(ctx context.Context, bundle *k8s.ClientBundle, sr
 	}
 
 	rsyncCmd := []string{"rsync", "-av"}
+	if opts.Checksum {
+		rsyncCmd = append(rsyncCmd, "-c")
+	}
 	if opts.Delete {
 		rsyncCmd = append(rsyncCmd, "--delete")
+	}
+	if opts.Partial {
+		rsyncCmd = append(rsyncCmd, "--partial")
+	}
+	if opts.Bwlimit != "" {
+		rsyncCmd = append(rsyncCmd, "--bwlimit="+opts.Bwlimit)
+	}
+	for _, excl := range opts.Excludes {
+		rsyncCmd = append(rsyncCmd, "--exclude="+excl)
+	}
+	for _, incl := range opts.Includes {
+		rsyncCmd = append(rsyncCmd, "--include="+incl)
+	}
+	if len(opts.ExtraArgs) > 0 {
+		rsyncCmd = append(rsyncCmd, opts.ExtraArgs...)
 	}
 	if opts.DryRun {
 		rsyncCmd = append(rsyncCmd, "--dry-run")
@@ -186,9 +238,21 @@ func (o *PVCOptions) runStdioBridge(ctx context.Context, srcBundle, destBundle *
 	srcPodName := fmt.Sprintf("kubectl-clone-src-%d", randId)
 	destPodName := fmt.Sprintf("kubectl-clone-dest-%d", randId)
 
-	// 1. Spawn source migration pod
+	// Check if source PVC is actively mounted; co-locate source worker if so
+	srcActivePod, srcNodeName, err := k8s.FindActivePodMountingPVC(ctx, srcBundle, srcPVC)
+	if err == nil && srcNodeName != "" {
+		util.PrintBanner(o.Out, fmt.Sprintf("Source PVC '%s' is actively mounted by pod '%s' on node '%s'. Co-locating source worker for live pre-sync...", srcPVC, srcActivePod, srcNodeName))
+	}
+
+	// Check if destination PVC is mounted
+	destActivePod, destNodeName, _ := k8s.FindActivePodMountingPVC(ctx, destBundle, destPVC)
+	if destNodeName != "" {
+		util.PrintBanner(o.Out, fmt.Sprintf("Destination PVC '%s' is mounted by pod '%s' on node '%s'. Co-locating destination worker...", destPVC, destActivePod, destNodeName))
+	}
+
+	// 1. Spawn source migration pod (readOnly: true)
 	util.PrintBanner(o.Out, fmt.Sprintf("Spawning source pod %s in %s...", srcPodName, srcBundle.Namespace))
-	_, err := k8s.SpawnMigrationPod(ctx, srcBundle, srcPodName, srcPVC, "/data", o.Image)
+	_, err = k8s.SpawnMigrationPod(ctx, srcBundle, srcPodName, srcPVC, "/data", o.Image, srcNodeName, true)
 	if err != nil {
 		return err
 	}
@@ -197,9 +261,9 @@ func (o *PVCOptions) runStdioBridge(ctx context.Context, srcBundle, destBundle *
 		_ = k8s.DeletePod(context.Background(), srcBundle, srcPodName)
 	}()
 
-	// 2. Spawn destination migration pod
+	// 2. Spawn destination migration pod (readOnly: false)
 	util.PrintBanner(o.Out, fmt.Sprintf("Spawning destination pod %s in %s...", destPodName, destBundle.Namespace))
-	_, err = k8s.SpawnMigrationPod(ctx, destBundle, destPodName, destPVC, "/data", o.Image)
+	_, err = k8s.SpawnMigrationPod(ctx, destBundle, destPodName, destPVC, "/data", o.Image, destNodeName, false)
 	if err != nil {
 		return err
 	}

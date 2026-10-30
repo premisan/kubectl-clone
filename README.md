@@ -207,6 +207,14 @@ kubectl clone p source-pvc dest-pvc --image bitnami/rsync:latest
 - `direct`: Mounts both PVCs into a single worker pod for local disk-to-disk speed.
 - `stdio-bridge`: Streams data bi-directionally between two clusters using the local CLI as an in-memory cross-pipe.
 
+#### 💡 Live Workload Support & Near Zero-Downtime 2-Phase Migration
+
+`kubectl clone pvc` automatically detects running pods actively mounting the source RWO PVC and **co-locates the migration worker on the exact same node** with `ReadOnly` volume mounting. This completely bypasses Kubernetes `Multi-Attach error` collisions without interrupting the active workload.
+
+**Recommended 2-Phase Workflow:**
+1. **Pre-sync (Live / Zero Downtime)**: Run `kubectl clone pvc src-pvc dest-pvc` while the application is online to replicate the bulk of data (GBs/TBs) in the background.
+2. **Final Cutover (Seconds of downtime)**: Scale down the workload (`kubectl scale --replicas=0`), run `kubectl clone pvc src-pvc dest-pvc` again to sync only the delta in seconds, then start the new deployment!
+
 ---
 
 ### 4. Container File & Directory Inspection (`ls` / `tree`)
@@ -278,6 +286,12 @@ kubectl clone tree my-pod:/etc/kubernetes/pki --full-path
       --dest-namespace string   Destination namespace
       --delete                  Delete extraneous files from destination
   -z, --compress                Compress data stream during transfer (default true)
+      --exclude strings         Exclude files matching PATTERN (can be specified multiple times)
+      --include strings         Don't exclude files matching PATTERN (can be specified multiple times)
+      --bwlimit string          Bandwidth limit (e.g. '10m', '5000')
+      --checksum                Skip based on checksum, not mod-time & size
+      --partial                 Keep partially transferred files
+      --rsync-args string       Pass arbitrary raw arguments directly to rsync
       --use-debug               Use ephemeral debug container to support Distroless pods (default true)
       --debug-image string      Container image for ephemeral debug containers (default "busybox:latest")
       --dry-run                 Perform a trial run with no changes made
@@ -294,6 +308,12 @@ kubectl clone tree my-pod:/etc/kubernetes/pki --full-path
       --strategy string         Replication strategy: 'auto', 'direct', or 'stdio-bridge' (default "auto")
       --delete                  Delete extraneous files in destination PVC
   -z, --compress                Compress data stream during transfer (default true)
+      --exclude strings         Exclude files matching PATTERN (can be specified multiple times)
+      --include strings         Don't exclude files matching PATTERN (can be specified multiple times)
+      --bwlimit string          Bandwidth limit (e.g. '10m', '5000')
+      --checksum                Skip based on checksum, not mod-time & size
+      --partial                 Keep partially transferred files
+      --rsync-args string       Pass arbitrary raw arguments directly to rsync
       --image string            Container image for migration pods (default "alpine:latest")
       --dry-run                 Perform a trial run with no changes made
 ```
