@@ -358,6 +358,46 @@ kubectl clone tree my-pod:/etc/kubernetes/pki --full-path
 
 ---
 
+## 플러그인 삭제 (Uninstallation)
+
+시스템에서 `kubectl-clone`을 제거하려면 다음 방법 중 하나를 사용하세요.
+
+### Makefile 사용
+소스코드에서 `make install`로 설치한 경우:
+```bash
+make uninstall
+
+# 사용자 지정 INSTALL_PATH로 설치한 경우:
+make uninstall INSTALL_PATH=/usr/local/bin
+```
+
+### 수동 삭제
+설치 디렉토리에서 실행 바이너리 및 자동완성 심볼릭 링크를 삭제합니다.
+```bash
+# 기본 설치 경로 (~/.local/bin)
+rm -f ~/.local/bin/kubectl-clone ~/.local/bin/kubectl_complete-clone
+
+# 사용자 지정 설치 경로 (예: /usr/local/bin)
+sudo rm -f /usr/local/bin/kubectl-clone /usr/local/bin/kubectl_complete-clone
+
+# go install로 설치한 경우
+rm -f $(go env GOPATH)/bin/kubectl-clone
+```
+
+### 셸 자동완성 설정 정리 (선택 사항)
+셸 설정 파일(`~/.zshrc`, `~/.bashrc` 등)에 자동완성 설정을 등록한 경우 해당 라인을 제거합니다.
+```bash
+# ~/.zshrc 또는 ~/.bashrc 파일에서 다음 줄 제거
+source <(kubectl clone completion <shell>)
+```
+
+삭제가 제대로 되었는지 확인하려면 다음 명령어를 실행하여 플러그인 목록에서 제거되었는지 확인합니다.
+```bash
+kubectl plugin list
+```
+
+---
+
 ## 라이선스
 
 Apache License, Version 2.0 하에 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.

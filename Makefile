@@ -1,4 +1,4 @@
-.PHONY: all build test install clean
+.PHONY: all build test install uninstall clean
 
 BIN_DIR := bin
 BINARY_NAME := kubectl-clone
@@ -23,3 +23,9 @@ install: build
 
 clean:
 	rm -rf $(BIN_DIR)
+
+uninstall:
+	@echo "Uninstalling $(BINARY_NAME) from $(INSTALL_PATH)..."
+	rm -f $(INSTALL_PATH)/$(BINARY_NAME) $(INSTALL_PATH)/kubectl_complete-clone
+	@echo "Successfully uninstalled!"
+

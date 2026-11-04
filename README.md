@@ -355,6 +355,46 @@ kubectl clone tree my-pod:/etc/kubernetes/pki --full-path
 
 ---
 
+## Uninstallation
+
+To remove `kubectl-clone` from your system, use one of the following methods:
+
+### Using Makefile
+If you installed from source via `make install`:
+```bash
+make uninstall
+
+# If installed with a custom INSTALL_PATH:
+make uninstall INSTALL_PATH=/usr/local/bin
+```
+
+### Manual Removal
+Delete the binary and completion symlink from your installation directory:
+```bash
+# Default installation path (~/.local/bin)
+rm -f ~/.local/bin/kubectl-clone ~/.local/bin/kubectl_complete-clone
+
+# Custom installation path (e.g. /usr/local/bin)
+sudo rm -f /usr/local/bin/kubectl-clone /usr/local/bin/kubectl_complete-clone
+
+# If installed via go install
+rm -f $(go env GOPATH)/bin/kubectl-clone
+```
+
+### Shell Autocompletion Cleanup (Optional)
+If you configured shell autocompletion in your shell configuration profile (e.g. `~/.zshrc`, `~/.bashrc`), remove the corresponding line:
+```bash
+# Remove this line from ~/.zshrc or ~/.bashrc:
+source <(kubectl clone completion <shell>)
+```
+
+To verify the uninstallation, run:
+```bash
+kubectl plugin list
+```
+
+---
+
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
